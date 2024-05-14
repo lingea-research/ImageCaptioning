@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html><head>
+<title>MASAPI Image Captioning Server</title>
+
+<link href="https://unpkg.com/nprogress@0.2.0/nprogress.css" rel="stylesheet" />
+<script src="https://unpkg.com/nprogress@0.2.0/nprogress.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+<!--
+<link href="nprogress.css" rel="stylesheet" />
+<script src="nprogress.js"></script>
+<script src="axios.min.js"></script>
+-->
+
+<script type="importmap">
+  {
+    "imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"
+    }
+  }
+</script>
+<!--"vue": "/vue.esm-browser.js"-->
+
+<script type="module">
+import { createApp } from 'vue'
+
+const items = [ "curr_model", "images", "models"];
+
+createApp({
+  data() {
+    return {
+      caption: "",
+      images: [],
+      curr_image: "",
+      models: [],
+      curr_model: "",
+      end_ts: "",
+    };
+  },
+  mounted() {
+    items.slice( 1).forEach( w => {
+      axios.get( `/api/list_${w}`)
+      .then( ( response) => {
+        Object.entries( response.data).forEach( i => this[ i[ 0]] = i[ 1]);
+      })
+      .catch( ( error) => {
+        this.caption = error;
+        console.log( error);
+      });
+    }, this);
+    const urlParams = new URLSearchParams( window.location.search);
+    if( urlParams.has('image')) {
+      this.curr_image = urlParams.get('image');
+      this.changeImage();
+    }
+  },
+  methods: {
+    async changeImage() {
+      this.caption = "... estimating caption ...";
+      await this.$nextTick();
+      NProgress.start();
+      this.end_ts = ""
+      const start_ts = Date.now();
+
+      axios.get( `/api/caption?image=${this.curr_image}`)
+      .then( ( response) => {
+        this.caption = response.data[ 0][ 1];  // TODO: do this better
+        console.log( response.data);
+      })
+      .catch( ( error) => {
+        console.log( error);
+        this.caption = `got error code ${error.response.status}: "${error.response.data.msg}"`;
+      })
+      .finally( () => {
+        this.end_ts = Date.now() - start_ts;
+        NProgress.done();
+      });
+    },
+    async changeModel( e) {
+      this.caption = `... loading model "${this.curr_model}"...`;
+      this.curr_image = "";
+      this.end_ts = ""
+      await this.$nextTick();
+      NProgress.start();
+
+      axios.get( `/api/load_model/${this.curr_model}`)
+      .then( ( response) => {
+        this.caption = "";
+      })
+      .catch( ( error) => {
+        console.log( error);
+        this.caption = error;
+      })
+      .finally( () => {
+        NProgress.done();
+      });
+    },
+    reloadImages() {
+      this.$refs.reload_images_button.style = "background-color:rgb(255, 255, 102, 0.8);";
+      this.curr_image = "";
+      this.caption = "";
+      this.end_ts = ""
+
+      axios.get( "/api/list_images")
+      .then( ( response) => {
+        this.images = response.data.images;
+      })
+      .catch( ( error) => {
+        this.caption = error;
+        console.log( error);
+      })
+      .finally( () => {
+        setTimeout( () => {
+          this.$refs.reload_images_button.style = "";
+        }, 500);
+      });
+    },
+  },
+  computed: {
+    currImageURL() {
+      const ci = this.curr_image;
+      return ci.length
+          ? `img/${ci}`
+          : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+    },
+  },
+}).mount('#app');
+</script>
+
+</head><body>
+  <div id="outer">
+    <div id="app">
+      <div style="float:left; padding-right:2em">
+        <h1 style="margin-top: 0;">Image Captioning</h1>
+        <h3>Model Name</h3>
+        <select @change="changeModel( $event)" v-model="curr_model">
+          <option value="">None</option>
+          <option v-for="model in models" :value="model" :selected="curr_model === model">{{ model }}</option>
+        </select>
+        <h3>Upload Image</h3>
+        <form ref="upload_form" action="/api/upload?save_image" method="post" enctype="multipart/form-data">
+          <input @change="$refs.upload_form.submit()" type="file" name="image" />
+        </form>
+        <h3>Image Name</h3>
+        <select @change="changeImage()" v-model="curr_image">
+          <option value="">None</option>
+          <option v-for="img in images" :value="img">{{ img }}</option>
+        </select>
+        <button ref="reload_images_button" @click="reloadImages()">Reload Directory</button>
+      </div>
+      <div style="float:right">
+        <p style="font-style: italic;">{{ caption }} {{ ( typeof end_ts === "number") ? `(completed in ${end_ts/1000} secs)` : "" }}</p>
+        <img :src="currImageURL" />
+      </div>
+    </div>
+  </div>
+  <style type="text/css">
+  #outer {
+    width:100%;
+    display: flex;
+    justify-content: center;
+  }
+  img {
+    min-width:100px;
+    min-height:100px;
+    border: 1px solid #333;
+    background-image:  url('data:image/png;base64,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');
+}
+  </style>
+</body></html>
+
